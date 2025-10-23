@@ -11,7 +11,7 @@ TIFF_FILE_PATH = 'data/2025-09-10, daedong_hs.data.tif'
 OUTPUT_CSV_PATH = 'sampled_pixel_address.csv'  # 결과 파일 이름 변경
 
 # ⭐️⭐️⭐️ 중요: 여기에 발급받은 V-World API 키를 입력하세요! ⭐️⭐️⭐️
-VWORLD_API_KEY = " D4E1B616-546F-3016-8B28-9C76E4724FC4"
+VWORLD_API_KEY = "D4E1B616-546F-3016-8B28-9C76E4724FC4"
 
 # ⭐️ 샘플링 간격 설정 (이전과 동일)
 SAMPLING_INTERVAL = 50
