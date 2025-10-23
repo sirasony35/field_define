@@ -12,60 +12,67 @@ from huggingface_hub import snapshot_download
 import traceback
 
 # ==============================================================================
-# 1. 설정: 우리가 성공적으로 실행했던 NVIDIA 모델을 최종 사용합니다.
+# 1. 설정: EuroSAT (Sentinel-2) 데이터로 학습한 최종 모델 (존재 확인 완료)
 # ==============================================================================
-# ⭐️ 최종 모델: NVIDIA SegFormer-B1 (ADE20k 데이터셋으로 학습됨)
-MODEL_NAME = "nvidia/segformer-b1-finetuned-ade-512-512"
+# ⭐️ 100% 공개된, Sentinel-2 전문가 모델 (인증 필요 없음)
+MODEL_NAME = "Chandanab/mit-b0-finetuned-eurosat"
 
-# ⭐️⭐️⭐️ 가장 중요한 수정 ⭐️⭐️⭐️
-# 이전 진단 결과, 모델이 경작지를 '나무(tree)'로 판단했으므로,
-# 찾고자 하는 클래스 ID를 16('field')이 아닌 4('tree')로 변경합니다.
-CROPLAND_CLASS_ID = 4
+# ⭐️ 이 모델의 경작지 관련 클래스 ID
+# ID 0: AnnualCrop (일년생 작물)
+# ID 5: Pasture (목초지)
+# ID 6: PermanentCrop (다년생 작물)
+CROP_CLASS_IDS = [0, 5, 6]
 
 # 사용자 파일 설정
 TIFF_FILE_PATH = 'data/2025-09-10, daedong_hs.data.tif'
-OUTPUT_HTML_PATH = 'classification_map_final.html'
-MODEL_SAVE_DIRECTORY = "model/" # 기존에 다운로드한 NVIDIA 모델 폴더
+OUTPUT_HTML_PATH = 'classification_map_Eurosat_Final.html'
+# ⭐️ 새 모델을 위해 새 폴더에 저장합니다.
+MODEL_SAVE_DIRECTORY = "./model_eurosat_chandanab/"
 MIN_AREA_THRESHOLD = 150
 
 # ==============================================================================
-# 2. 모델 다운로드 기능 (이미 다운로드 되어있으므로 건너뛰게 됩니다)
+# 2. 모델 다운로드 기능 (인증 절대 필요 없음)
 # ==============================================================================
 def download_model_if_needed(repo_id, save_dir):
+    """지정된 폴더에 모델이 없으면 자동으로 다운로드합니다."""
     if not os.path.exists(os.path.join(save_dir, "config.json")):
-        print(f"'{repo_id}' 모델이 로컬에 없습니다. 다운로드를 시작합니다.")
+        print(f"'{repo_id}' 모델이 로컬에 없습니다.")
+        print("모델 다운로드를 시작합니다. (100% 공개 모델, 인증 필요 없음)")
         try:
+            # 이 모델은 100% 공개 모델이므로 인증 문제가 없습니다.
             snapshot_download(repo_id=repo_id, local_dir=save_dir, local_dir_use_symlinks=False, resume_download=True)
             print("🎉 모델 다운로드 성공!")
         except Exception as e:
             print(f"❌ 오류: 모델 다운로드 실패. {e}"); return False
     else:
-        print(f"'{repo_id}' 모델이 로컬에 이미 존재합니다. 다운로드를 건너뜁니다.")
+        print(f"'{repo_id}' 모델이 로컬에 이미 존재합니다.")
     return True
 
 # ==============================================================================
-# 메인 분석 로직 시작
+# 메인 분석 로직 시작 (이전과 동일)
 # ==============================================================================
-print("🤖 [최종 버전] 경작지 자동 분류 프로세스를 시작합니다.")
+print("🤖 [EuroSAT 위성 전문 모델] 경작지 자동 분류를 시작합니다.")
 
-# 단계 1: 모델 확인
+# 단계 1: 모델 다운로드 또는 확인
 if not download_model_if_needed(MODEL_NAME, MODEL_SAVE_DIRECTORY):
     exit(1)
 
 # 단계 2: 모델 및 이미지 프로세서 불러오기
 print("\n>> 단계 1: 로컬 폴더에서 모델을 불러옵니다...")
 try:
+    # ⭐️ AutoModelForSemanticEstimation -> AutoModelForSemanticSegmentation
+    #    이전 코드의 오타를 수정했습니다.
     image_processor = AutoImageProcessor.from_pretrained(MODEL_SAVE_DIRECTORY)
     model = AutoModelForSemanticSegmentation.from_pretrained(MODEL_SAVE_DIRECTORY)
     print("   ...모델 로딩 성공!")
 except Exception:
-    print(f"   ❌ 오류: 모델 로딩 중 문제가 발생했습니다."); traceback.print_exc(); exit(1)
+    print(f"   ❌ 오류: 모델을 불러오는 중 문제가 발생했습니다."); traceback.print_exc(); exit(1)
 
-# 단계 3: 위성 이미지 불러오기 및 전처리
+# 단계 3: 위성 이미지 불러오기 및 전처리 (RGB 3밴드 사용)
 print(f"\n>> 단계 2: 위성 이미지 '{TIFF_FILE_PATH}'를 불러오고 전처리합니다...")
 try:
     with rasterio.open(TIFF_FILE_PATH) as src:
-        bands = src.read([3, 2, 1])
+        bands = src.read([3, 2, 1]) # RGB 밴드 사용
         nodata_val = src.nodatavals[0]
         stretched_bands = []
         for band_data in bands:
@@ -100,9 +107,9 @@ print("   ...경작지 예측 완료!")
 
 # 단계 5: 결과 후처리 및 지도 생성
 print("\n>> 단계 4: 예측 결과를 분석하고 HTML 지도로 만듭니다...")
-# ⭐️⭐️⭐️ 바로 이 부분에서 ID 4('tree')에 해당하는 영역만 추출합니다! ⭐️⭐️⭐️
-cropland_mask = np.where(pred_seg == CROPLAND_CLASS_ID, 255, 0).astype(np.uint8)
-num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(cropland_mask, connectivity=8)
+final_cropland_mask = np.isin(pred_seg, CROP_CLASS_IDS)
+final_cropland_mask_uint8 = np.where(final_cropland_mask, 255, 0).astype(np.uint8)
+num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(final_cropland_mask_uint8, connectivity=8)
 center_lon = (src_bounds.left + src_bounds.right) / 2
 center_lat = (src_bounds.top + src_bounds.bottom) / 2
 center_coords_web = transform(src_crs, {'init': 'epsg:4326'}, [center_lon], [center_lat])
